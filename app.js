@@ -82,7 +82,7 @@ function translit(src) {
 
 // ---------- opslag ----------
 const KEY = 'ellinika.v1';
-const defaults = () => ({ v: 1, items: {}, done: {}, tests: {}, start: null, settings: { audio: true, speak: true, translit: true, rate: 0.85 } });
+const defaults = () => ({ v: 1, items: {}, done: {}, tests: {}, log: {}, start: null, settings: { audio: true, speak: true, translit: true, typing: false, rate: 0.85 } });
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
@@ -118,13 +118,21 @@ const ART = new Set(['ο', 'η', 'το', 'οι', 'τα']);
     section({ title: u.title, level: u.level, unit: ui });
     u.ids = u.words.map(w => add({ id: 'w:' + w.el, track: 'word', el: w.el, nl: w.nl, say: w.el, unit: ui, level: u.level }));
     const n = Math.ceil(u.ids.length / 7), baseSize = Math.floor(u.ids.length / n), extra = u.ids.length % n;
-    let pos = 0;
-    for (let k = 0; k < n; k++) {
-      const size = baseSize + (k < extra ? 1 : 0);
-      node({ id: `u${ui + 1}l${k + 1}`, kind: 'lesson', track: 'word', title: u.title, sub: `Les ${k + 1} van ${n}`, unit: ui,
-        items: u.ids.slice(pos, pos + size), sents: u.sents.filter((s, si) => si % n === k), tip: k === 0 ? u.tip : null });
-      pos += size;
-    }
+    const parts = [];
+    for (let k = 0, pos = 0; k < n; k++) { const size = baseSize + (k < extra ? 1 : 0); parts.push(u.ids.slice(pos, pos + size)); pos += size; }
+    // Een zin hoort bij de laatste les waarvan hij een woord gebruikt, zodat je alleen bekende woorden tegenkomt.
+    const bare = el => { const t = el.split(' '); return norm(t.length > 1 && ART.has(t[0]) ? t.slice(1).join(' ') : el); };
+    const buckets = parts.map(() => []);
+    u.sents.forEach((s, si) => {
+      const hay = ' ' + norm(s.el) + ' '; let k = -1;
+      parts.forEach((part, pi) => part.forEach(id => { const key = bare(ITEMS[id].el); if (key.length > 1 && hay.includes(' ' + key + ' ')) k = Math.max(k, pi); }));
+      buckets[k < 0 ? si % n : k].push(s);
+    });
+    for (let k = 0; k < n - 1; k++) while (buckets[k].length > 3) buckets[k + 1].unshift(buckets[k].pop());
+    for (let k = n - 1; k > 0; k--) while (buckets[k].length > 3) buckets[k - 1].push(buckets[k].shift());
+    buckets.forEach((bk, k) => { if (!bk.length) { const big = buckets.reduce((a, c) => c.length > a.length ? c : a); if (big.length > 1) bk.push(big.pop()); } });
+    parts.forEach((items, k) => node({ id: `u${ui + 1}l${k + 1}`, kind: 'lesson', track: 'word', title: u.title, sub: `Les ${k + 1} van ${n}`, unit: ui,
+      items, sents: buckets[k], tip: k === 0 ? u.tip : null }));
     node({ id: `u${ui + 1}t`, kind: 'test', track: 'word', title: 'Toets: ' + u.title, sub: 'Peilmoment over dit thema', items: u.ids, sents: u.sents, unit: ui });
     if (ui in NUM_AFTER) numSection(NUM_AFTER[ui]);
     if (ui === UNITS.length - 1 || UNITS[ui + 1].level !== u.level) {
@@ -169,17 +177,23 @@ if (hasTTS) { loadVoices(); speechSynthesis.addEventListener('voiceschanged', lo
 const audioOn = () => S.settings.audio && hasTTS;
 function say(text, rate) {
   if (!audioOn() || !text) return;
+  const busy = speechSynthesis.speaking || speechSynthesis.pending;
+  clearTimeout(sayTimer);
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'el-GR'; if (elVoice) u.voice = elVoice;
   u.rate = rate || S.settings.rate;
-  speechSynthesis.speak(u);
+  // Android slikt een zin soms in als die direct op cancel() volgt; daarom een korte pauze.
+  if (busy) sayTimer = setTimeout(() => speechSynthesis.speak(u), 90); else speechSynthesis.speak(u);
 }
+let sayTimer = 0;
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const speakOn = () => S.settings.speak;
 
 const ICON_SPK = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>';
 const ICON_MIC = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2z"/></svg>';
+const ICON_CHECK = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 25l8 8 15-17"/></svg>';
+const ICON_RETRY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M36 24a12 12 0 1 1-4-9M33 8v8h-8"/></svg>';
 const speaker = (text, big) => h('button', { class: 'spk' + (big ? ' big' : ''), 'aria-label': 'Luister', html: ICON_SPK, onclick: () => say(text) });
 
 // ---------- oefeningen samenstellen ----------
@@ -207,7 +221,7 @@ function distractors(it, n, field) {
   return out;
 }
 const mc = (it, mode) => ({ t: 'mc', id: it.id, mode });
-const spellOr = (it, fallback) => spellParts(it.el) && it.track === 'word' ? { t: 'spell', id: it.id } : mc(it, fallback || 'nl-el');
+const spellOr = (it, fallback) => spellParts(it.el) && it.track === 'word' ? { t: S.settings.typing ? 'type' : 'spell', id: it.id } : mc(it, fallback || 'nl-el');
 function matchEx(its) {
   const seen = new Set(), ids = [];
   for (const x of shuffle(its)) { if (ids.length < 5 && !seen.has(x.nl)) { seen.add(x.nl); ids.push(x.id); } }
@@ -295,7 +309,7 @@ let ses = null, view = 'home', openSec = null;
 
 function startSession(mode, node, q) {
   if (!q.length) return;
-  ses = { mode, node, q, i: 0, ok: 0, n: 0, first: {}, noSpeak: false };
+  ses = { mode, node, q, i: 0, ok: 0, n: 0, first: {}, noSpeak: false, t0: Date.now() };
   fill($('#app'), h('div', { class: 'ses' },
     h('div', { class: 'ses-top' },
       h('button', { class: 'x', 'aria-label': 'Stoppen', onclick: () => { if (confirm('Stoppen met deze sessie? Je voortgang in deze sessie gaat verloren.')) { stopAudio(); ses = null; render(); } } }, '✕'),
@@ -303,7 +317,7 @@ function startSession(mode, node, q) {
     h('div', { id: 'ex' }), h('div', { id: 'foot', class: 'foot' })));
   nextEx();
 }
-function stopAudio() { if (hasTTS) speechSynthesis.cancel(); }
+function stopAudio() { clearTimeout(sayTimer); if (hasTTS) speechSynthesis.cancel(); }
 function advance() { ses.i++; nextEx(); }
 function nextEx() {
   if (ses.i >= ses.q.length) return finish();
@@ -326,6 +340,7 @@ function answer(ex, ok, fb = {}) {
   fill(foot, 
     h('div', { class: 'fbt' }, ok ? pick(['Goed', 'Klopt', 'Precies', 'Σωστά']) : 'Niet helemaal'),
     !ok && fb.right ? h('div', {}, 'Juist: ', h('b', {}, fb.right)) : null,
+    fb.note ? h('div', { class: 'small' }, fb.note) : null,
     fb.el ? h('div', { class: 'fbel' }, h('b', {}, fb.el), showTl ? h('span', { class: 'tl' }, '  ' + translit(fb.el)) : null, fb.nl ? ' · ' + fb.nl : null) : null,
     h('button', { class: 'btn', onclick: advance }, 'Verder'));
   if (fb.el && fb.sayAfter) say(fb.el);
@@ -352,8 +367,8 @@ function tileUI(ex, main, foot, cfg) {
   const check = h('button', { class: 'btn', disabled: true, onclick: () => answer(ex, cfg.check(chosen.map(i => tiles[i])), cfg.fb) }, 'Controleer');
   const draw = () => {
     fill(ansEl, cfg.pre ? h('span', { class: 'pre' }, cfg.pre) : null,
-      chosen.map((ti, k) => h('button', { class: 'tile' + (cfg.letters ? ' letter' : ''), onclick: () => { chosen.splice(k, 1); draw(); } }, tiles[ti])));
-    fill(poolEl, tiles.map((t, ti) => h('button', { class: 'tile' + (cfg.letters ? ' letter' : '') + (chosen.includes(ti) ? ' used' : ''), onclick: () => { chosen.push(ti); draw(); } }, t)));
+      chosen.map((ti, k) => h('button', { class: 'tile' + (cfg.letters ? ' letter' : '') + (cfg.grTiles ? ' gr' : ''), onclick: () => { chosen.splice(k, 1); draw(); } }, tiles[ti])));
+    fill(poolEl, tiles.map((t, ti) => h('button', { class: 'tile' + (cfg.letters ? ' letter' : '') + (cfg.grTiles ? ' gr' : '') + (chosen.includes(ti) ? ' used' : ''), onclick: () => { chosen.push(ti); draw(); } }, t)));
     check.disabled = !chosen.length;
   };
   put(main, 
@@ -453,11 +468,27 @@ const RENDER = {
     put(main, h('p', { class: 'label' }, 'Zoek de paren bij elkaar'),
       h('div', { class: 'match' }, h('div', { class: 'col' }, shuffle(its).map(x => mk(x, 'L'))), h('div', { class: 'col' }, shuffle(its).map(x => mk(x, 'R')))));
   },
+  type(ex, main, foot) {
+    const it = ITEMS[ex.id], p = spellParts(it.el);
+    const input = h('input', { type: 'text', class: 'typein', lang: 'el', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: 'Typ in het Grieks' });
+    const check = h('button', { class: 'btn', onclick: () => {
+      const v = input.value.trim(); if (!v) return;
+      input.blur();
+      const ok = norm(v) === norm(p.w) || norm(v) === norm(it.el);
+      const exact = [p.w, it.el].some(x => x.toLowerCase().replace(/ς/g, 'σ') === v.toLowerCase().replace(/ς/g, 'σ'));
+      answer(ex, ok, { el: it.el, nl: it.nl, right: it.el, sayAfter: true, note: ok && !exact ? 'Goed, maar let op het accent.' : null });
+    } }, 'Controleer');
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') check.click(); });
+    put(main, h('p', { class: 'label' }, 'Typ het Griekse woord'), h('div', { class: 'prompt' }, it.nl),
+      h('div', { class: 'row' }, p.pre ? h('span', { class: 'pre' }, p.pre) : null, h('div', { class: 'grow' }, input)));
+    put(foot, check);
+    setTimeout(() => input.focus(), 60);
+  },
   spell(ex, main, foot) {
     const it = ITEMS[ex.id], p = spellParts(it.el);
     const letters = [...p.w];
     const extra = sample([...'αεηιοκλμνπρστυ'].filter(c => !letters.includes(c)), 2);
-    tileUI(ex, main, foot, { label: 'Bouw het Griekse woord', big: it.nl, pre: p.pre, letters: true, tiles: shuffle(letters.concat(extra)),
+    tileUI(ex, main, foot, { label: 'Bouw het Griekse woord', big: it.nl, pre: p.pre, letters: true, grTiles: true, tiles: shuffle(letters.concat(extra)),
       check: a => a.join('') === p.w, fb: { el: it.el, nl: it.nl, right: it.el, sayAfter: true } });
   },
   build(ex, main, foot) {
@@ -470,7 +501,7 @@ const RENDER = {
     const dis = [];
     for (const s of sample(others, 12)) for (const t of sentTokens(s[field])) { if (dis.length < 3 && !have.has(norm(t)) && t.length > 1) { have.add(norm(t)); dis.push(t); break; } }
     const fb = { el: ex.s.el, nl: ex.s.nl, right: toNl ? ex.s.nl : ex.s.el, sayAfter: mode === 'nl-el' };
-    const cfg = { tiles: shuffle(target.concat(dis)), check: a => norm(a.join(' ')) === norm(target.join(' ')), fb };
+    const cfg = { grTiles: !toNl, tiles: shuffle(target.concat(dis)), check: a => norm(a.join(' ')) === norm(target.join(' ')), fb };
     if (mode === 'nl-el') tileUI(ex, main, foot, Object.assign(cfg, { label: 'Vertaal naar het Grieks', big: ex.s.nl }));
     else if (mode === 'listen') tileUI(ex, main, foot, Object.assign(cfg, { label: 'Bouw de zin die je hoort', say: ex.s.el, hide: true, autoplay: true }));
     else tileUI(ex, main, foot, Object.assign(cfg, { label: 'Vertaal naar het Nederlands', big: ex.s.el, grBig: true, say: ex.s.el, autoplay: true }));
@@ -482,7 +513,7 @@ const RENDER = {
     if (mode === 'tiles') {
       const t = word.split(' ');
       const dis = sample(['δύο', 'τρία', 'πέντε', 'επτά', 'δέκα', 'είκοσι', 'τριάντα', 'πενήντα', 'εκατόν', 'διακόσια', 'χίλια'].filter(x => !t.includes(x)), 3);
-      return tileUI(ex, main, foot, { label: 'Bouw dit getal in het Grieks', big: String(ex.n), tiles: shuffle(t.concat(dis)), check: a => a.join(' ') === word, fb });
+      return tileUI(ex, main, foot, { label: 'Bouw dit getal in het Grieks', big: String(ex.n), grTiles: true, tiles: shuffle(t.concat(dis)), check: a => a.join(' ') === word, fb });
     }
     const input = h('input', { type: 'text', inputmode: 'numeric', class: 'numin', placeholder: '…', autocomplete: 'off' });
     const check = h('button', { class: 'btn', onclick: () => { if (input.value.trim() === '') return; input.blur(); answer(ex, parseInt(input.value.replace(/\D/g, ''), 10) === ex.n, fb); } }, 'Controleer');
@@ -531,6 +562,8 @@ function finish() {
   stopAudio();
   const t = today(), { mode, node } = ses;
   const pct = ses.n ? Math.round(100 * ses.ok / ses.n) : 100;
+  S.log[t] = (S.log[t] || 0) + Math.min(1200, Math.round((Date.now() - ses.t0) / 1000));
+  Object.keys(S.log).forEach(d => { if (+d < t - 60) delete S.log[d]; });
   const firstIds = Object.keys(ses.first);
   const missed = firstIds.filter(id => ses.first[id] === false);
   let title = 'Klaar', lines = [], extra = [], list = [];
@@ -585,6 +618,7 @@ function finish() {
   const due = dueIds().length;
   ses = null;
   fill($('#app'), h('div', { class: 'sum' },
+    h('div', { class: 'done-mark' + (mode === 'test' && pct < 80 ? ' retry' : ''), html: mode === 'test' && pct < 80 ? ICON_RETRY : ICON_CHECK }),
     h('h1', {}, title),
     lines.map(l => h('p', { class: 'muted' }, l)),
     list.length ? h('div', { class: 'card' },
@@ -593,7 +627,7 @@ function finish() {
     h('div', { class: 'spacer' }), extra,
     mode === 'lesson' && next && unlocked(next) ? h('button', { class: 'btn', onclick: () => startNode(next) }, next.kind === 'test' ? 'Door naar de toets' : 'Volgende les') : null,
     mode === 'test' && pct < 80 ? h('button', { class: 'btn', onclick: () => startNode(node) }, 'Toets opnieuw') : null,
-    due && mode !== 'review' ? h('button', { class: 'btn ghost', onclick: startReview }, `Herhalen (${due})`) : null,
+    due ? h('button', { class: 'btn' + (mode === 'review' ? '' : ' ghost'), onclick: startReview }, mode === 'review' ? `Nog een ronde (${due})` : `Herhalen (${due})`) : null,
     h('button', { class: 'btn ghost', onclick: () => { view = 'home'; render(); } }, 'Klaar voor nu')));
   window.scrollTo(0, 0);
 }
@@ -630,31 +664,53 @@ const meter = st => h('div', { class: 'meter' },
   h('i', { class: 'm2', style: `width:${100 * (st.known - st.solid) / st.total}%` }),
   h('i', { class: 'm1', style: `width:${100 * (st.seen - st.known) / st.total}%` }));
 
+const ICONS = ['👋', '🙋', '🔤', '👪', '🍞', '🍽️', '🏃', '🧭', '🏛️', '🕒', '✨', '🛍️', '⛴️', '🛏️', '🏖️', '🎨', '✍️', '🏠', '🩺', '📅', '🍅', '🍳', '⏳', '💬', '💼', '🚴', '🔗', '⚖️', '🐐', '📱', '🔭', '🚑', '👉', '🤝', '🫒', '🏤', '💡', '🔄', '📏', '🗣️'];
+const secIcon = sec => sec.unit != null ? ICONS[sec.unit] || '•' : sec.title === 'Het alfabet' ? 'Αα' : sec.title.startsWith('Niveautoets') ? '🎓' : '12';
+const minutes = days => { let s = 0; for (let d = 0; d < days; d++) s += S.log[today() - d] || 0; return Math.round(s / 60); };
+
 function viewHome() {
-  const cur = currentNode(), due = dueIds().length, p = pace();
+  const cur = currentNode(), due = dueIds().length, p = pace(), w = stats('word');
   if (openSec === null && cur) openSec = cur.sec;
-  const todayCard = h('div', { class: 'card stack' },
-    due ? h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h3', {}, 'Herhalen'), h('p', { class: 'muted small' }, `${due} ${due === 1 ? 'onderdeel staat' : 'onderdelen staan'} klaar. Begin hiermee.`)), h('button', { class: 'btn slim', onclick: startReview }, 'Start'))
-      : Object.keys(S.items).length ? h('p', { class: 'muted small' }, 'Niets te herhalen vandaag.') : null,
-    cur ? h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h3', {}, cur.title), h('p', { class: 'muted small' }, cur.sub)), h('button', { class: 'btn slim' + (due ? ' ghost' : ''), onclick: () => startNode(cur) }, cur.kind === 'test' ? 'Toets' : 'Les'))
-      : h('p', {}, 'Je hebt alle lessen afgerond. Blijf herhalen.'));
+  const hr = new Date().getHours(), mins = minutes(1);
+  const hero = h('header', { class: 'hero' },
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('div', { class: 'greet' }, hr < 12 ? 'Καλημέρα' : hr < 18 ? 'Γεια σου' : 'Καλησπέρα'), h('div', { class: 'hero-sub' }, p.text)),
+      mins ? h('div', { class: 'hero-min' }, h('b', {}, mins), 'min vandaag') : null),
+    h('div', { class: 'hero-meter' }, h('i', { style: `width:${Math.max(1.5, 100 * p.doneN / p.total)}%` })),
+    h('div', { class: 'hero-sub' }, `${p.doneN} van ${p.total} lessen · ${w.known} van ${w.total} woorden gekend`),
+    h('div', { class: 'meander' }));
+  const act = (icon, title, sub, label, fn, primary) => h('button', { class: 'act' + (primary ? ' primary' : ''), onclick: fn },
+    h('span', { class: 'ico' + (/^[Α-ω0-9]/.test(icon) ? ' txt' : '') }, icon), h('span', { class: 'grow' }, h('span', { class: 'at' }, title), h('span', { class: 'as' }, sub)), h('span', { class: 'go' }, label));
+  const todayCard = h('div', { class: 'stack' },
+    due ? act('↻', 'Herhalen', `${due} ${due === 1 ? 'onderdeel staat' : 'onderdelen staan'} klaar. Begin hiermee.`, 'Start', startReview, true) : null,
+    cur ? act(secIcon(SECTIONS[cur.sec]), cur.title, cur.kind === 'test' ? cur.sub : (cur.track === 'word' ? cur.sub : cur.sub), cur.kind === 'test' ? 'Toets' : 'Les', () => startNode(cur), !due)
+      : h('div', { class: 'card' }, 'Je hebt alle lessen afgerond. Blijf herhalen om het vast te houden.'),
+    !due && Object.keys(S.items).length ? h('p', { class: 'muted small', style: 'padding:0 4px' }, 'Niets te herhalen vandaag.') : null);
+  const welcome = !S.start && !Object.keys(S.done).length ? h('div', { class: 'card tipcard' },
+    h('h3', {}, 'Zo werkt het'),
+    h('p', {}, 'Doe elke dag eerst je herhaling en daarna één of twee nieuwe lessen. Een les duurt ongeveer vijf minuten.'),
+    h('button', { class: 'link', style: 'padding:10px 0 0', onclick: () => startNode(NODES.find(n => n.id === 'at')) }, 'Ken je het alfabet al? Doe de toets en sla het over')) : null;
   let unitNo = 0;
   const path = SECTIONS.map((sec, si) => {
     const nodes = sec.nodes.map(i => NODES[i]);
-    const dn = nodes.filter(n => isDone(n.id)).length;
+    const dn = nodes.filter(n => isDone(n.id)).length, all = dn === nodes.length;
     const name = sec.unit != null ? `${++unitNo}. ${sec.title}` : sec.title;
-    const open = openSec === si;
-    return h('div', { class: 'sec' + (dn === nodes.length ? ' done' : '') },
-      h('button', { class: 'sec-head', onclick: () => { openSec = open ? -1 : si; render(); } },
-        h('span', { class: 't' }, name), h('span', { class: 'chip' }, sec.level), h('span', { class: 'n' }, `${dn}/${nodes.length}`)),
-      open ? nodes.map(n => h('button', { class: 'node' + (isDone(n.id) ? ' done' : '') + (n === cur ? ' cur' : ''), disabled: !unlocked(n), onclick: () => startNode(n) },
-        h('span', { class: 'dot' }, isDone(n.id) ? '✓' : ''),
-        h('span', {}, h('div', { class: 'nt' }, n.kind === 'test' ? n.title : (n.track === 'word' ? n.sub : n.title)),
-          h('div', { class: 'ns' }, n.kind === 'test' ? (S.tests[n.id] ? `Laatste score ${S.tests[n.id].score}%` : n.sub) : (n.track === 'word' ? n.items.map(id => ITEMS[id].el).slice(0, 3).join(', ') + '…' : n.sub))))) : null);
+    const open = openSec === si, icon = secIcon(sec);
+    const tip = sec.unit != null ? UNITS[sec.unit].tip : null;
+    return h('div', { class: 'sec' + (all ? ' done' : '') + (open ? ' open' : '') + (cur && cur.sec === si ? ' now' : '') },
+      h('button', { class: 'sec-head', 'aria-expanded': String(open), onclick: () => { openSec = open ? -1 : si; render(); } },
+        h('span', { class: 'ico' + (all ? ' ok' : /^[Α-ω0-9]/.test(icon) ? ' txt' : '') }, all ? '✓' : icon),
+        h('span', { class: 't' }, h('span', { class: 'tt' }, name), h('span', { class: 'ts' }, `${sec.level} · ${dn} van ${nodes.length}`)),
+        h('span', { class: 'chev' }, '›')),
+      h('div', { class: 'sec-bar' }, h('i', { style: `width:${100 * dn / nodes.length}%` })),
+      open ? h('div', { class: 'sec-body' },
+        tip ? h('p', { class: 'sec-tip' }, tip) : null,
+        nodes.map(n => h('button', { class: 'node' + (isDone(n.id) ? ' done' : '') + (n === cur ? ' cur' : ''), disabled: !unlocked(n), onclick: () => startNode(n) },
+          h('span', { class: 'dot' }, isDone(n.id) ? '✓' : ''),
+          h('span', { class: 'grow' }, h('div', { class: 'nt' }, n.kind === 'test' ? n.title : (n.track === 'word' ? n.sub : n.title)),
+            h('div', { class: 'ns' + (n.kind !== 'test' && n.track !== 'num' ? ' gr' : '') }, n.kind === 'test' ? (S.tests[n.id] ? `Laatste score ${S.tests[n.id].score}%` : n.sub) : (n.track === 'word' ? n.items.map(id => ITEMS[id].el).slice(0, 3).join(', ') + '…' : n.sub)))))) : null);
   });
-  return h('div', { class: 'page' },
-    h('div', {}, h('h1', {}, 'Ελληνικά'), h('p', { class: 'muted small' }, p.text)),
-    todayCard, h('h2', {}, 'Leerpad'), path);
+  return h('div', { class: 'page' }, hero, welcome, todayCard, h('h2', {}, 'Leerpad'), path);
 }
 
 function viewProgress() {
@@ -673,7 +729,7 @@ function viewProgress() {
   return h('div', { class: 'page' },
     h('h1', {}, 'Voortgang'),
     h('div', { class: 'card' },
-      h('h3', {}, 'Traject'), h('p', { class: 'muted small' }, p.text),
+      h('h3', {}, 'Traject'), h('p', { class: 'muted small' }, p.text + ` · ${minutes(1)} min vandaag, ${minutes(7)} min in de laatste 7 dagen`),
       h('div', { class: 'meter' }, h('i', { class: 'm3', style: `width:${100 * p.doneN / p.total}%` })),
       h('p', { class: 'muted small' }, `${p.doneN} van ${p.total} lessen en toetsen afgerond.`)),
     h('div', { class: 'card' },
@@ -701,6 +757,7 @@ function viewSettings() {
       toggle('audio', 'Geluid', 'Griekse uitspraak en luisteroefeningen'),
       toggle('speak', 'Spreekoefeningen', SR ? 'Met spraakherkenning; je stem gaat daarvoor naar Google' : 'Zonder spraakherkenning: je beoordeelt jezelf'),
       toggle('translit', 'Uitspraakhulp', 'Toont de klank in gewone letters, zoals kaliméra'),
+      toggle('typing', 'Zelf typen', 'Woorden typen in plaats van letters aantikken. Leert beter, maar vraagt een Grieks toetsenbord (Gboard > Talen > Grieks)'),
       h('div', { class: 'set' }, h('div', { class: 'grow' }, h('div', {}, 'Spreeksnelheid'), h('div', { class: 'muted small' }, st.rate <= 0.75 ? 'Langzaam' : st.rate >= 1 ? 'Normaal tempo' : 'Iets langzamer')),
         h('input', { type: 'range', min: '0.6', max: '1.1', step: '0.05', value: String(st.rate), 'aria-label': 'Spreeksnelheid', onchange: e => { st.rate = +e.target.value; save(); render(); } })),
       h('div', { class: 'set' }, h('div', { class: 'grow muted small' }, voiceNote), h('button', { class: 'btn slim ghost', onclick: () => say('Καλημέρα! Τι κάνεις;') }, 'Test geluid'))),
