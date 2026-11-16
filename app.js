@@ -94,7 +94,7 @@ let S = load();
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* opslag niet beschikbaar */ } }
 
 // ---------- cursus opbouwen ----------
-const ITEMS = {}, NODES = [], SECTIONS = [], BYTRACK = { alpha: [], num: [], word: [] };
+const ITEMS = {}, NODES = [], SECTIONS = [], BYTRACK = { alpha: [], num: [], word: [], gram: [] };
 const ART = new Set(['ο', 'η', 'το', 'οι', 'τα']);
 (function build() {
   const add = it => { if (!ITEMS[it.id]) { ITEMS[it.id] = it; BYTRACK[it.track].push(it); } return it.id; };
@@ -108,7 +108,7 @@ const ART = new Set(['ο', 'η', 'το', 'οι', 'τα']);
 
   const numSection = i => {
     const l = NUM_LESSONS[i];
-    section({ title: l.title, level: 'A1' });
+    section({ title: l.title, level: 'A1', icon: '12' });
     node({ id: 'n' + (i + 1), kind: 'lesson', track: 'num', title: l.title, sub: 'Tellen en verstaan', range: l.range, tip: l.tip,
       items: l.nums.map(n => add({ id: 'n:' + n, track: 'num', el: elNum(n), nl: String(n), say: elNum(n), unit: -1, level: 'A1' })) });
   };
@@ -135,6 +135,17 @@ const ART = new Set(['ο', 'η', 'το', 'οι', 'τα']);
       items, sents: buckets[k], tip: k === 0 ? u.tip : null }));
     node({ id: `u${ui + 1}t`, kind: 'test', track: 'word', title: 'Toets: ' + u.title, sub: 'Peilmoment over dit thema', items: u.ids, sents: u.sents, unit: ui });
     if (ui in NUM_AFTER) numSection(NUM_AFTER[ui]);
+    GRAMMAR.forEach((g, gi) => {
+      if (g.after !== ui) return;
+      section({ title: 'Grammatica: ' + g.title, level: g.level, icon: 'ω' });
+      const ids = g.verbs.flatMap(key => VERBS[key].forms.map((f, pi) => add({ id: `g:${key}:${pi}`, track: 'gram', el: f, nl: `${PERSONS[pi][1]} · ${VERBS[key].nl}`, say: f, verb: key, pi, unit: -1, level: g.level })));
+      node({ id: 'g' + (gi + 1), kind: 'lesson', track: 'gram', title: g.title, sub: 'Vervoegen', items: ids, verbs: g.verbs, tip: g.tip });
+    });
+    DIALOGS.forEach((d, di) => {
+      if (d.after !== ui) return;
+      section({ title: 'Gesprek: ' + d.title, level: d.level, icon: '💬' });
+      node({ id: 'd' + (di + 1), kind: 'lesson', track: 'dialog', title: d.title, sub: 'Luisteren en antwoorden', items: [], lines: d.lines, tip: d.scene });
+    });
     if (ui === UNITS.length - 1 || UNITS[ui + 1].level !== u.level) {
       const us = UNITS.filter(x => x.level === u.level);
       section({ title: 'Niveautoets ' + u.level, level: u.level });
@@ -159,7 +170,7 @@ function grade(id, ok) {
   const t = today();
   const it = S.items[id] || (S.items[id] = { b: 0, d: t });
   if (ok) { it.b = Math.min(7, it.b + 1); it.d = t + INTERVAL[it.b]; }
-  else { it.b = Math.max(1, it.b - 2); it.d = t + 1; }
+  else { it.b = Math.max(1, it.b - 2); it.d = t + 1; it.m = (it.m || 0) + 1; }
 }
 const dueIds = () => Object.keys(S.items).filter(id => ITEMS[id] && S.items[id].d <= today()).sort((a, b) => S.items[a].d - S.items[b].d);
 function stats(track, level) {
@@ -196,6 +207,20 @@ const ICON_CHECK = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" s
 const ICON_RETRY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M36 24a12 12 0 1 1-4-9M33 8v8h-8"/></svg>';
 const speaker = (text, big) => h('button', { class: 'spk' + (big ? ' big' : ''), 'aria-label': 'Luister', html: ICON_SPK, onclick: () => say(text) });
 
+const bigSpeaker = text => h('div', { class: 'listen' }, speaker(text, true), h('button', { class: 'slow', onclick: () => say(text, 0.55) }, 'Langzaam'));
+/** Speelt meerdere zinnen na elkaar af; onStart krijgt de index van de zin die begint. */
+function sayAll(texts, onStart, onDone) {
+  if (!audioOn()) return;
+  clearTimeout(sayTimer); speechSynthesis.cancel();
+  sayTimer = setTimeout(() => texts.forEach((t, i) => {
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = 'el-GR'; if (elVoice) u.voice = elVoice; u.rate = S.settings.rate;
+    u.onstart = () => onStart && onStart(i);
+    if (i === texts.length - 1) u.onend = () => onDone && onDone();
+    speechSynthesis.speak(u);
+  }), 90);
+}
+
 // ---------- oefeningen samenstellen ----------
 const tokens = s => s.split(/\s+/).map(t => t.replace(/[.,;!?·:]/g, '')).filter(Boolean);
 const PROPER = /^(Ελλ|Ολλανδ|Έλλην|Δευτέρ|Τρίτη|Τετάρτ|Πέμπτ|Παρασκευ|Σάββατ|Σαββατοκ|Κυριακ|Μαρία|Νίκο|Αθήνα|Ακρόπολ|Μάιο|Αύγουστ|Nederland|Griek|Athene|Maria|Nikos|Akropolis)/;
@@ -230,7 +255,33 @@ function matchEx(its) {
 const randNum = r => r[0] + Math.floor(Math.random() * (r[1] - r[0] + 1));
 function numEx(n, mode) { return { t: 'num', n, mode: mode === 'tiles' && !elNum(n).includes(' ') ? 'read' : mode }; }
 
+function buildGram(node) {
+  const q = [{ t: 'tip', title: node.title, text: node.tip }];
+  node.verbs.forEach(key => {
+    q.push({ t: 'table', verb: key });
+    shuffle([0, 1, 2, 3, 4, 5]).forEach(pi => q.push({ t: 'conj', id: `g:${key}:${pi}`, mode: 'mc' }));
+  });
+  sample(node.items, 8).forEach(id => q.push({ t: 'conj', id, mode: 'spell' }));
+  const it = ITEMS[pick(node.items)];
+  q.push({ t: 'speak', el: it.el, nl: it.nl, id: it.id });
+  return q;
+}
+function buildDialog(node) {
+  const q = [{ t: 'tip', title: 'Gesprek: ' + node.title, text: node.tip }];
+  node.lines.forEach(([who, el, nl], i) => {
+    if (who === 'A') q.push({ t: 'dline', lines: node.lines, upto: i });
+    else {
+      const prev = i > 0 ? node.lines[i - 1][1] : null;
+      q.push({ t: 'build', s: { el, nl }, mode: 'nl-el', context: prev, dialog: true, noRetry: true });
+      q.push({ t: 'speak', el, nl });
+    }
+  });
+  q.push({ t: 'dline', lines: node.lines, upto: node.lines.length - 1, replay: true });
+  return q;
+}
 function buildLesson(node) {
+  if (node.track === 'gram') return buildGram(node);
+  if (node.track === 'dialog') return buildDialog(node);
   const its = node.items.map(id => ITEMS[id]);
   const q = [];
   if (node.tip) q.push({ t: 'tip', title: node.title, text: node.tip });
@@ -280,6 +331,7 @@ function buildTest(node) {
 
 function reviewEx(it) {
   const b = (S.items[it.id] || { b: 1 }).b;
+  if (it.track === 'gram') return { t: 'conj', id: it.id, mode: b <= 3 ? 'mc' : 'spell' };
   if (it.track === 'alpha') return mc(it, pick(['el-nl', 'nl-el']));
   if (it.track === 'num') return pick([numEx(+it.nl, 'listen'), mc(it, 'el-nl'), mc(it, 'nl-el')]);
   if (b <= 2) return mc(it, pick(['el-nl', 'nl-el', 'listen']));
@@ -333,7 +385,7 @@ function answer(ex, ok, fb = {}) {
   $('#ex').classList.add('locked');
   if (!ex.retry) { ses.n++; if (ok) ses.ok++; }
   if (!fb.marked) mark(ex.id, ok);
-  if (!ok && ses.mode !== 'test' && !ex.retry) ses.q.push(Object.assign({}, ex, { retry: true }));
+  if (!ok && ses.mode !== 'test' && !ex.retry && !ex.noRetry) ses.q.push(Object.assign({}, ex, { retry: true }));
   const foot = $('#foot');
   foot.className = 'foot ' + (ok ? 'ok' : 'bad');
   const showTl = S.settings.translit && fb.el;
@@ -355,7 +407,7 @@ function choiceUI(ex, main, cfg) {
   } }, o.text));
   put(main, 
     h('p', { class: 'label' }, cfg.label),
-    cfg.hide ? speaker(cfg.say, true) : null,
+    cfg.hide ? bigSpeaker(cfg.say) : null,
     !cfg.hide && cfg.big ? h('div', { class: 'row' }, h('div', { class: 'grow prompt' + (cfg.grBig ? ' greek' : '') + (cfg.huge ? ' huge' : '') }, cfg.big), cfg.say && audioOn() ? speaker(cfg.say) : null) : null,
     cfg.small ? h('p', { class: 'muted' }, cfg.small) : null,
     h('div', { class: 'opts' }, btns));
@@ -373,7 +425,8 @@ function tileUI(ex, main, foot, cfg) {
   };
   put(main, 
     h('p', { class: 'label' }, cfg.label),
-    cfg.hide ? speaker(cfg.say, true) : null,
+    cfg.context ? h('div', { class: 'bubble a gr' }, cfg.context) : null,
+    cfg.hide ? bigSpeaker(cfg.say) : null,
     !cfg.hide && cfg.big ? h('div', { class: 'row' }, h('div', { class: 'grow prompt' + (cfg.grBig ? ' greek' : '') }, cfg.big), cfg.say && audioOn() ? speaker(cfg.say) : null) : null,
     ansEl, poolEl);
   put(foot, check);
@@ -382,6 +435,45 @@ function tileUI(ex, main, foot, cfg) {
 }
 
 const RENDER = {
+  table(ex, main, foot) {
+    const v = VERBS[ex.verb], tl = S.settings.translit;
+    put(main, h('p', { class: 'label' }, 'Nieuw werkwoord'), h('div', { class: 'introcard' },
+      h('div', { class: 'prompt greek' }, v.forms[0]), h('div', { class: 'nl' }, v.nl),
+      h('div', { class: 'ptable' }, v.forms.map((f, pi) => h('button', { onclick: () => say(f) },
+        h('span', { class: 'pp' }, PERSONS[pi][1]), h('span', { class: 'pf gr' }, f), tl ? h('span', { class: 'tl' }, translit(f)) : null))),
+      audioOn() ? h('button', { class: 'slow', onclick: () => sayAll(v.forms) }, 'Speel het rijtje af') : null));
+    plainNext(foot);
+    say(v.forms[0]);
+  },
+  conj(ex, main, foot) {
+    const it = ITEMS[ex.id], v = VERBS[it.verb], P = PERSONS[it.pi];
+    const fb = { el: it.el, nl: it.nl, right: it.el, sayAfter: true };
+    const parts = it.el.split(' '), w = parts[parts.length - 1], lead = parts.slice(0, -1).join(' ');
+    if (ex.mode === 'spell' && w.length <= 11) {
+      const letters = [...w], extra = sample([...'αεηιοςμνστυ'].filter(c => !letters.includes(c)), 2);
+      return tileUI(ex, main, foot, { label: `Vervoeg ${v.forms[0]} (${v.nl})`, big: P[1], pre: P[0].split(' ')[0] + ' ' + (lead ? lead + ' ' : ''), letters: true, grTiles: true,
+        tiles: shuffle(letters.concat(extra)), check: a => a.join('') === w, fb });
+    }
+    const others = shuffle([...new Set(v.forms)].filter(f => f !== it.el)).slice(0, 3);
+    choiceUI(ex, main, { label: `Vervoeg ${v.forms[0]} (${v.nl})`, big: P[0] + ' …', grBig: true, small: P[1],
+      opts: shuffle([it.el].concat(others)).map(f => ({ text: f, ok: f === it.el })), grOpts: true, fb });
+  },
+  dline(ex, main, foot) {
+    const lines = ex.lines.slice(0, ex.upto + 1);
+    let showNl = !!ex.replay;
+    const bubbles = lines.map(([who, el, nl], i) => h('button', { class: 'bubble ' + (who === 'A' ? 'a' : 'b') + (!ex.replay && i === ex.upto ? ' new' : ''), onclick: () => say(el) },
+      h('span', { class: 'gr' }, el), h('span', { class: 'bnl' }, nl)));
+    const chat = h('div', { class: 'chat' + (showNl ? ' nl' : '') }, bubbles);
+    const play = () => sayAll(lines.map(l => l[1]), i => { bubbles.forEach((b, k) => b.classList.toggle('live', k === i)); bubbles[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, () => bubbles.forEach(b => b.classList.remove('live')));
+    put(main, h('p', { class: 'label' }, ex.replay ? 'Het hele gesprek' : 'Luister naar de ander'), chat);
+    if (ex.replay) {
+      put(foot, audioOn() ? h('button', { class: 'btn ghost', onclick: play }, 'Speel het hele gesprek af') : null, h('button', { class: 'btn', onclick: advance }, 'Afronden'));
+    } else {
+      put(foot, h('button', { class: 'link', onclick: () => { showNl = !showNl; chat.classList.toggle('nl', showNl); } }, 'Toon of verberg de vertaling'), h('button', { class: 'btn', onclick: advance }, 'Verder'));
+      say(lines[ex.upto][1]);
+    }
+    setTimeout(() => { main.scrollTop = main.scrollHeight; }, 0);
+  },
   tip(ex, main, foot) {
     put(main, h('div', { class: 'tipcard' }, h('h3', {}, ex.title), h('p', {}, ex.text)));
     plainNext(foot, 'Begin');
@@ -502,7 +594,7 @@ const RENDER = {
     for (const s of sample(others, 12)) for (const t of sentTokens(s[field])) { if (dis.length < 3 && !have.has(norm(t)) && t.length > 1) { have.add(norm(t)); dis.push(t); break; } }
     const fb = { el: ex.s.el, nl: ex.s.nl, right: toNl ? ex.s.nl : ex.s.el, sayAfter: mode === 'nl-el' };
     const cfg = { grTiles: !toNl, tiles: shuffle(target.concat(dis)), check: a => norm(a.join(' ')) === norm(target.join(' ')), fb };
-    if (mode === 'nl-el') tileUI(ex, main, foot, Object.assign(cfg, { label: 'Vertaal naar het Grieks', big: ex.s.nl }));
+    if (mode === 'nl-el') tileUI(ex, main, foot, Object.assign(cfg, { label: ex.dialog ? 'Jouw antwoord in het Grieks' : 'Vertaal naar het Grieks', big: ex.s.nl, context: ex.context }));
     else if (mode === 'listen') tileUI(ex, main, foot, Object.assign(cfg, { label: 'Bouw de zin die je hoort', say: ex.s.el, hide: true, autoplay: true }));
     else tileUI(ex, main, foot, Object.assign(cfg, { label: 'Vertaal naar het Nederlands', big: ex.s.el, grBig: true, say: ex.s.el, autoplay: true }));
   },
@@ -519,7 +611,7 @@ const RENDER = {
     const check = h('button', { class: 'btn', onclick: () => { if (input.value.trim() === '') return; input.blur(); answer(ex, parseInt(input.value.replace(/\D/g, ''), 10) === ex.n, fb); } }, 'Controleer');
     input.addEventListener('keydown', e => { if (e.key === 'Enter') check.click(); });
     put(main, h('p', { class: 'label' }, mode === 'listen' ? 'Welk getal hoor je? Typ het in cijfers' : 'Welk getal is dit? Typ het in cijfers'),
-      mode === 'listen' ? speaker(word, true) : h('div', { class: 'prompt greek' }, word), input);
+      mode === 'listen' ? bigSpeaker(word) : h('div', { class: 'prompt greek' }, word), input);
     put(foot, check);
     if (mode === 'listen') say(word);
   },
@@ -576,8 +668,9 @@ function finish() {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
     title = 'Les klaar';
     lines.push(`${ses.ok} van ${ses.n} in één keer goed.`);
-    if (!wasDone) lines.push(node.track === 'word' ? 'Deze woorden komen morgen terug in je herhaling.' : 'Dit komt morgen terug in je herhaling.');
-    list = node.items;
+    if (node.track === 'dialog') lines.push('Je hebt een heel gesprek gevoerd. Speel het gerust later nog eens na.');
+    else if (!wasDone) lines.push(node.track === 'word' ? 'Deze woorden komen morgen terug in je herhaling.' : 'Dit komt morgen terug in je herhaling.');
+    list = node.track === 'gram' ? missed : node.items;
   } else if (mode === 'review') {
     firstIds.forEach(id => { if (S.items[id]) grade(id, ses.first[id]); });
     title = 'Herhaling klaar';
@@ -665,7 +758,7 @@ const meter = st => h('div', { class: 'meter' },
   h('i', { class: 'm1', style: `width:${100 * (st.seen - st.known) / st.total}%` }));
 
 const ICONS = ['👋', '🙋', '🔤', '👪', '🍞', '🍽️', '🏃', '🧭', '🏛️', '🕒', '✨', '🛍️', '⛴️', '🛏️', '🏖️', '🎨', '✍️', '🏠', '🩺', '📅', '🍅', '🍳', '⏳', '💬', '💼', '🚴', '🔗', '⚖️', '🐐', '📱', '🔭', '🚑', '👉', '🤝', '🫒', '🏤', '💡', '🔄', '📏', '🗣️'];
-const secIcon = sec => sec.unit != null ? ICONS[sec.unit] || '•' : sec.title === 'Het alfabet' ? 'Αα' : sec.title.startsWith('Niveautoets') ? '🎓' : '12';
+const secIcon = sec => sec.icon ? sec.icon : sec.unit != null ? ICONS[sec.unit] || '•' : sec.title === 'Het alfabet' ? 'Αα' : sec.title.startsWith('Niveautoets') ? '🎓' : '12';
 const minutes = days => { let s = 0; for (let d = 0; d < days; d++) s += S.log[today() - d] || 0; return Math.round(s / 60); };
 
 function viewHome() {
@@ -708,7 +801,7 @@ function viewHome() {
         nodes.map(n => h('button', { class: 'node' + (isDone(n.id) ? ' done' : '') + (n === cur ? ' cur' : ''), disabled: !unlocked(n), onclick: () => startNode(n) },
           h('span', { class: 'dot' }, isDone(n.id) ? '✓' : ''),
           h('span', { class: 'grow' }, h('div', { class: 'nt' }, n.kind === 'test' ? n.title : (n.track === 'word' ? n.sub : n.title)),
-            h('div', { class: 'ns' + (n.kind !== 'test' && n.track !== 'num' ? ' gr' : '') }, n.kind === 'test' ? (S.tests[n.id] ? `Laatste score ${S.tests[n.id].score}%` : n.sub) : (n.track === 'word' ? n.items.map(id => ITEMS[id].el).slice(0, 3).join(', ') + '…' : n.sub)))))) : null);
+            h('div', { class: 'ns' + (n.kind !== 'test' && (n.track === 'word' || n.track === 'alpha') ? ' gr' : '') }, n.kind === 'test' ? (S.tests[n.id] ? `Laatste score ${S.tests[n.id].score}%` : n.sub) : (n.track === 'word' ? n.items.map(id => ITEMS[id].el).slice(0, 3).join(', ') + '…' : n.sub)))))) : null);
   });
   return h('div', { class: 'page' }, hero, welcome, todayCard, h('h2', {}, 'Leerpad'), path);
 }
@@ -718,10 +811,23 @@ function viewProgress() {
   const A1 = levelInfo('A1'), A2 = levelInfo('A2');
   const levelText = A2.pass ? 'A2 behaald' : A1.pass ? 'A1 behaald, op weg naar A2' : A1.pct >= 100 ? 'A1-stof af: doe de niveautoets' : 'Op weg naar A1';
   const legend = h('div', { class: 'legend' },
-    h('span', { style: '--sw:var(--accent-soft)' }, 'net geleerd'), h('span', { style: '--sw:var(--accent-mid)' }, 'gekend'), h('span', { style: '--sw:var(--accent)' }, 'stevig'));
+    h('span', { style: '--sw:var(--line)' }, 'nog niet'), h('span', { style: '--sw:var(--accent-soft)' }, 'net geleerd'), h('span', { style: '--sw:var(--accent-mid)' }, 'gekend'), h('span', { style: '--sw:var(--accent)' }, 'stevig'));
   const card = (title, st, unit) => h('div', { class: 'card' },
     h('div', { class: 'row' }, h('h3', { class: 'grow' }, title), h('span', { class: 'big-num' }, st.known, h('span', { class: 'muted', style: 'font-size:16px;font-weight:500' }, ' / ' + st.total))),
     meter(st), h('p', { class: 'muted small' }, `${st.known} ${unit} gekend, waarvan ${st.solid} stevig. ${st.seen - st.known} net geleerd.`));
+  const statusOf = s => !s ? 0 : s.b >= 5 ? 3 : s.b >= 3 ? 2 : 1;
+  const wallInfo = h('p', { class: 'muted small wall-info' }, 'Elk blokje is één woord, in de volgorde van het leerpad. Tik erop om het te zien.');
+  const wall = h('div', { class: 'wall', role: 'img', 'aria-label': `Overzicht van alle ${w.total} woorden: ${w.known} gekend, ${w.seen - w.known} net geleerd`, onclick: e => {
+    const i = e.target.dataset ? e.target.dataset.i : null; if (i == null) return;
+    const it = BYTRACK.word[i], st = S.items[it.id];
+    const old = wall.querySelector('.sel'); if (old) old.classList.remove('sel');
+    e.target.classList.add('sel');
+    const wait = st ? st.d - today() : 0;
+    const txt = !st ? 'nog niet geleerd' : ['', 'net geleerd', 'gekend', 'stevig'][statusOf(st)] + (wait > 0 ? `, herhaling over ${wait} ${wait === 1 ? 'dag' : 'dagen'}` : ', staat klaar voor herhaling');
+    fill(wallInfo, h('b', { class: 'gr' }, it.el), ` · ${it.nl} · ${txt}`);
+    say(it.el);
+  } }, BYTRACK.word.map((it, i) => h('i', { class: 'c' + statusOf(S.items[it.id]), 'data-i': i })));
+  const hard = Object.keys(S.items).filter(id => ITEMS[id] && (S.items[id].m || 0) >= 2 && S.items[id].b < 5).sort((a, b) => S.items[b].m - S.items[a].m).slice(0, 8);
   const lv = (L, info, off) => h('div', { class: off ? 'off' : '' },
     h('div', { class: 'lv' }, h('span', {}, L + (info && info.pass ? ' ✓' : '')), h('span', { class: 'muted' }, info ? info.pct + '%' : '')),
     h('div', { class: 'meter' }, h('i', { class: 'm3', style: `width:${info ? info.pct : 0}%` })));
@@ -736,10 +842,18 @@ function viewProgress() {
       h('h3', {}, 'Taalniveau'), h('p', { class: 'muted small' }, levelText),
       h('div', { class: 'levels' }, lv('A1', A1), lv('A2', A2), lv('B1', null, true)),
       h('p', { class: 'muted small', style: 'margin-top:10px' }, 'Schatting op basis van afgeronde lessen en gekende woorden. Een ✓ betekent dat je de niveautoets hebt gehaald. B1 vraagt meer woorden en gesprekspraktijk dan deze app biedt.')),
-    card('De 1000 belangrijkste woorden', w, 'woorden'),
+    h('div', { class: 'card' },
+      h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'De 1000 belangrijkste woorden'), h('span', { class: 'big-num' }, w.known, h('span', { class: 'muted', style: 'font-size:16px;font-weight:500' }, ' / ' + w.total))),
+      h('p', { class: 'muted small' }, `${w.known} woorden gekend, waarvan ${w.solid} stevig. ${w.seen - w.known} net geleerd.`),
+      wall, legend, wallInfo),
+    hard.length ? h('div', { class: 'card' },
+      h('h3', {}, 'Dit blijft lastig'), h('p', { class: 'muted small' }, 'Wat je het vaakst miste. Tik om te luisteren.'),
+      h('div', { class: 'wordlist', style: 'margin:6px 0 10px' }, hard.map(id => h('button', { onclick: () => say(ITEMS[id].say) }, h('span', { class: 'g' }, ITEMS[id].el), h('span', { class: 'd' }, ITEMS[id].nl)))),
+      h('button', { class: 'btn ghost', onclick: () => startSession('practice', null, buildReview(hard.concat(hard))) }, 'Oefen deze nu')) : null,
+    card('Grammatica', stats('gram'), 'werkwoordsvormen'),
     card('Alfabet', a, 'letters en combinaties'),
     card('Getallen', n, 'telwoorden'),
-    h('div', { class: 'card' }, legend, h('p', { class: 'muted small', style: 'margin-top:8px' }, 'Gekend: je wist het nog na minstens een week aan herhalingen. Stevig: het zit er na ruim een maand nog in.')),
+    h('div', { class: 'card' }, h('p', { class: 'muted small' }, 'Gekend: je wist het nog na minstens een week aan herhalingen. Stevig: het zit er na ruim een maand nog in.')),
     h('h2', {}, 'Extra oefenen'),
     h('button', { class: 'btn ghost', disabled: !hasItems, onclick: startPractice }, 'Vrij oefenen met geleerde stof'),
     h('button', { class: 'btn ghost', disabled: !range, onclick: startNumbers }, range ? `Getallen oefenen (${range[0]} tot ${range[1]})` : 'Getallen oefenen (na de eerste getallenles)'));

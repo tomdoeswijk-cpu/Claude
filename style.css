@@ -219,6 +219,35 @@ input[type=range] { width: 120px; accent-color: var(--accent); }
 .foot .fbel { font-size: 17px; }
 .foot .fbel b { font-family: var(--serif); font-size: 19px; }
 
+/* ---------- gesprekken en grammatica ---------- */
+.listen { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.listen .spk.big { margin-bottom: 14px; }
+.slow { background: none; border: 1.5px solid var(--line); border-radius: 99px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.chat { display: flex; flex-direction: column; gap: 10px; }
+.bubble { max-width: 86%; text-align: left; border: 0; border-radius: 18px; padding: 11px 14px; font-size: 19px; line-height: 1.35; background: var(--surface); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 6px; transition: box-shadow 0.2s; }
+.bubble.b { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-color: var(--accent); border-radius: 18px 18px 6px 18px; }
+.bubble span { display: block; }
+.bubble .bnl { display: none; font-size: 14px; opacity: 0.75; margin-top: 3px; }
+.chat.nl .bnl { display: block; }
+.bubble.new { animation: in 0.3s ease-out; box-shadow: 0 0 0 3px var(--accent-soft); }
+.bubble.live { box-shadow: 0 0 0 3px var(--warm); }
+#ex > .bubble { font-size: 17px; color: var(--muted); }
+.ptable { width: 100%; display: flex; flex-direction: column; margin: 8px 0; }
+.ptable button { display: grid; grid-template-columns: 1fr 1.2fr 1.2fr; gap: 8px; align-items: baseline; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 9px 4px; }
+.ptable .pp { color: var(--muted); font-size: 14px; }
+.ptable .pf { font-weight: 700; font-size: 19px; }
+.ptable .tl { font-size: 14px; }
+.introcard:has(.ptable) { padding-top: 30px; margin: 0; }
+
+/* ---------- woordenmuur ---------- */
+.wall { display: grid; grid-template-columns: repeat(25, 1fr); gap: 2px; margin: 14px 0 12px; }
+.wall i { aspect-ratio: 1; border-radius: 2px; background: var(--line); }
+.wall .c1 { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-mid); }
+.wall .c2 { background: var(--accent-mid); }
+.wall .c3 { background: var(--accent); }
+.wall .sel { outline: 2px solid var(--warm); outline-offset: 1px; }
+.wall-info { margin-top: 10px; min-height: 40px; }
+
 /* ---------- afronding ---------- */
 .sum { padding: 44px 18px 28px; display: flex; flex-direction: column; gap: 14px; min-height: 100dvh; animation: in 0.3s ease-out; }
 .sum h1 { font: 700 32px/1.15 var(--serif); }
