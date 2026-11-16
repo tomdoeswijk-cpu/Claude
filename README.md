@@ -13,6 +13,7 @@ Persoonlijke web-app om in zes maanden Grieks te leren: alfabet, getallen en 100
 - `data-core.js`: alfabet, getallen en hulpfuncties voor de inhoud
 - `data-a1.js`, `data-a2.js`: woordenschat en voorbeeldzinnen per thema (één regel per woord: `grieks | nederlands`)
 - `data-extra.js`: werkwoordsvervoegingen en gesprekken
+- `data-fun.js`: plaatjes, ezelsbruggetjes en kaartjes met uitdrukkingen
 - `app.js`: lessen, herhaling, toetsen, spraak en schermen
 - `sw.js`: offline-cache. Verhoog `CACHE` na een wijziging als je die direct wilt zien.
 

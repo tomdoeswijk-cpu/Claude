@@ -248,6 +248,22 @@ input[type=range] { width: 120px; accent-color: var(--accent); }
 .wall .sel { outline: 2px solid var(--warm); outline-offset: 1px; }
 .wall-info { margin-top: 10px; min-height: 40px; }
 
+/* ---------- plezier ---------- */
+.emoji { font-size: 64px; line-height: 1.1; animation: pop 0.4s; }
+.hook { margin-top: 10px; font-size: 14.5px; text-align: left; background: var(--warm-soft); border-radius: 12px; padding: 10px 12px; }
+.hook::before { content: "Ezelsbruggetje"; display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--warm); margin-bottom: 2px; }
+.opts.grid { display: grid; grid-template-columns: 1fr 1fr; }
+.opt.pic { text-align: center; font-size: 54px; line-height: 1.2; padding: 18px 8px; }
+.tfcard { margin: auto 0; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 30px 20px; text-align: center; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
+.tfcard .eq { color: var(--muted); font-size: 22px; }
+.btn.no { color: var(--bad); border-color: var(--bad-soft); } .btn.yes { color: var(--ok); border-color: var(--ok-soft); }
+.foot.quick { text-align: center; padding-bottom: calc(26px + env(safe-area-inset-bottom)); }
+.postcard { display: flex; flex-direction: column; gap: 6px; text-align: left; background: var(--surface); border: 1.5px dashed var(--warm); border-radius: 14px; padding: 16px; transform: rotate(-0.8deg); box-shadow: var(--shadow); animation: in 0.4s 0.5s both; }
+.postcard .pc-k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--warm); }
+.postcard .pc-el { font-size: 22px; font-weight: 700; line-height: 1.25; }
+.postcard .pc-nl { font-size: 15px; }
+.cheer { display: block; font-size: 17px; font-weight: 600; color: var(--ok); margin-top: 4px; }
+
 /* ---------- afronding ---------- */
 .sum { padding: 44px 18px 28px; display: flex; flex-direction: column; gap: 14px; min-height: 100dvh; animation: in 0.3s ease-out; }
 .sum h1 { font: 700 32px/1.15 var(--serif); }

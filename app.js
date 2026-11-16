@@ -82,7 +82,7 @@ function translit(src) {
 
 // ---------- opslag ----------
 const KEY = 'ellinika.v1';
-const defaults = () => ({ v: 1, items: {}, done: {}, tests: {}, log: {}, start: null, settings: { audio: true, speak: true, translit: true, typing: false, rate: 0.85 } });
+const defaults = () => ({ v: 1, items: {}, done: {}, tests: {}, log: {}, start: null, settings: { audio: true, speak: true, translit: true, typing: false, fx: true, rate: 0.85 } });
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
@@ -255,6 +255,18 @@ function matchEx(its) {
 const randNum = r => r[0] + Math.floor(Math.random() * (r[1] - r[0] + 1));
 function numEx(n, mode) { return { t: 'num', n, mode: mode === 'tiles' && !elNum(n).includes(' ') ? 'read' : mode }; }
 
+const tfEx = it => ({ t: 'tf', id: it.id, truth: Math.random() < 0.5 });
+// Thema's met een duidelijke samenhang, geschikt voor "welke hoort er niet bij".
+const TIGHT = new Set([3, 4, 5, 8, 9, 12, 13, 14, 15, 17, 18, 19, 20, 28, 34]);
+const FOOD = new Set([4, 5, 20, 34]); // eetthema's overlappen te veel om elkaars buitenbeentje te zijn
+function oddEx(unit, its) {
+  if (!TIGHT.has(unit)) return null;
+  const inLesson = new Set(its.map(x => x.id));
+  const pool = BYTRACK.word.filter(x => hasArticle(x) && TIGHT.has(x.unit));
+  const same = sample(pool.filter(x => x.unit === unit && (inLesson.has(x.id) || S.items[x.id])), 3);
+  const other = pick(pool.filter(x => x.unit !== unit && !(FOOD.has(x.unit) && FOOD.has(unit)) && S.items[x.id]));
+  return same.length === 3 && other ? { t: 'odd', ids: same.map(x => x.id), odd: other.id } : null;
+}
 function buildGram(node) {
   const q = [{ t: 'tip', title: node.title, text: node.tip }];
   node.verbs.forEach(key => {
@@ -304,8 +316,10 @@ function buildLesson(node) {
     if (node.range) for (let i = 0; i < 6; i++) q.push(numEx(randNum(node.range), ['tiles', 'listen', 'read'][i % 3]));
     q.push({ t: 'speak', el: pick(its).el, nl: null });
   } else {
-    shuffle(its).forEach((x, i) => q.push(i % 3 === 0 ? mc(x, 'listen') : i % 3 === 1 ? mc(x, 'nl-el') : spellOr(x)));
+    shuffle(its).forEach((x, i) => q.push(i % 3 === 2 ? spellOr(x) : EMOJI[x.el] ? { t: 'pic', id: x.id, mode: i % 3 === 0 ? 'l-e' : 'e-w' } : mc(x, i % 3 === 0 ? 'listen' : 'nl-el')));
     node.sents.forEach((s, i) => q.push({ t: 'build', s, mode: ['nl-el', 'listen', 'el-nl'][(i + node.idx) % 3] }));
+    q.push(oddEx(node.unit, its));
+    sample(its, 5).forEach(x => q.push(tfEx(x)));
     const w = pick(its); q.push({ t: 'speak', el: w.el, nl: w.nl, id: w.id });
     if (node.sents.length) { const s = pick(node.sents); q.push({ t: 'speak', el: s.el, nl: s.nl }); }
     sample(its, 3).forEach(x => q.push(spellOr(x, 'listen')));
@@ -334,7 +348,7 @@ function reviewEx(it) {
   if (it.track === 'gram') return { t: 'conj', id: it.id, mode: b <= 3 ? 'mc' : 'spell' };
   if (it.track === 'alpha') return mc(it, pick(['el-nl', 'nl-el']));
   if (it.track === 'num') return pick([numEx(+it.nl, 'listen'), mc(it, 'el-nl'), mc(it, 'nl-el')]);
-  if (b <= 2) return mc(it, pick(['el-nl', 'nl-el', 'listen']));
+  if (b <= 2) return pick([mc(it, 'el-nl'), mc(it, 'nl-el'), mc(it, 'listen'), tfEx(it), EMOJI[it.el] ? { t: 'pic', id: it.id, mode: pick(['l-e', 'e-w']) } : mc(it, 'listen')]);
   if (b <= 4) return pick([spellOr(it), mc(it, 'listen'), mc(it, 'nl-el')]);
   return pick([spellOr(it), spellOr(it), mc(it, 'nl-el'), { t: 'speak', el: it.el, nl: it.nl, id: it.id }]);
 }
@@ -380,6 +394,23 @@ function nextEx() {
   RENDER[ex.t](ex, main, foot);
   main.scrollTop = 0;
 }
+let actx = null;
+/** Kort geluidje en trilling bij goed of fout. */
+function fx(ok) {
+  if (!S.settings.fx) return;
+  try {
+    if (navigator.vibrate) navigator.vibrate(ok ? 12 : [25, 50, 25]);
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    actx = actx || new AC();
+    const t = actx.currentTime;
+    (ok ? [[660, 0], [880, 0.09]] : [[196, 0]]).forEach(([f, d]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.1, t + d + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + d + (ok ? 0.16 : 0.28));
+      o.connect(g); g.connect(actx.destination); o.start(t + d); o.stop(t + d + 0.32);
+    });
+  } catch (e) { /* geen geluid beschikbaar */ }
+}
 function mark(id, ok) { if (id) ses.first[id] = ses.first[id] !== false && ok; }
 function answer(ex, ok, fb = {}) {
   $('#ex').classList.add('locked');
@@ -387,12 +418,20 @@ function answer(ex, ok, fb = {}) {
   if (!fb.marked) mark(ex.id, ok);
   if (!ok && ses.mode !== 'test' && !ex.retry && !ex.noRetry) ses.q.push(Object.assign({}, ex, { retry: true }));
   const foot = $('#foot');
+  fx(ok);
+  if (ok && fb.quick) {
+    foot.className = 'foot ok quick'; fill(foot, h('div', { class: 'fbt' }, '✓ ' + pick(['Goed', 'Klopt', 'Σωστά'])));
+    setTimeout(() => { if (ses && ses.q[ses.i] === ex) advance(); }, 600);
+    return;
+  }
   foot.className = 'foot ' + (ok ? 'ok' : 'bad');
   const showTl = S.settings.translit && fb.el;
+  const hook = !ok && ex.id && ITEMS[ex.id] ? HOOKS[ITEMS[ex.id].el] : null;
   fill(foot, 
     h('div', { class: 'fbt' }, ok ? pick(['Goed', 'Klopt', 'Precies', 'Σωστά']) : 'Niet helemaal'),
     !ok && fb.right ? h('div', {}, 'Juist: ', h('b', {}, fb.right)) : null,
     fb.note ? h('div', { class: 'small' }, fb.note) : null,
+    hook ? h('div', { class: 'small' }, 'Ezelsbruggetje: ' + hook) : null,
     fb.el ? h('div', { class: 'fbel' }, h('b', {}, fb.el), showTl ? h('span', { class: 'tl' }, '  ' + translit(fb.el)) : null, fb.nl ? ' · ' + fb.nl : null) : null,
     h('button', { class: 'btn', onclick: advance }, 'Verder'));
   if (fb.el && fb.sayAfter) say(fb.el);
@@ -400,7 +439,7 @@ function answer(ex, ok, fb = {}) {
 const plainNext = (foot, label) => fill(foot, h('button', { class: 'btn', onclick: advance }, label || 'Verder'));
 
 function choiceUI(ex, main, cfg) {
-  const btns = cfg.opts.map(o => h('button', { class: 'opt' + (cfg.grOpts ? ' gr' : ''), onclick: e => {
+  const btns = cfg.opts.map(o => h('button', { class: 'opt' + (cfg.grOpts ? ' gr' : '') + (cfg.grid ? ' pic' : ''), onclick: e => {
     e.currentTarget.classList.add(o.ok ? 'ok' : 'bad');
     btns.forEach((b, i) => { if (cfg.opts[i].ok) b.classList.add('ok'); });
     answer(ex, o.ok, cfg.fb);
@@ -410,7 +449,7 @@ function choiceUI(ex, main, cfg) {
     cfg.hide ? bigSpeaker(cfg.say) : null,
     !cfg.hide && cfg.big ? h('div', { class: 'row' }, h('div', { class: 'grow prompt' + (cfg.grBig ? ' greek' : '') + (cfg.huge ? ' huge' : '') }, cfg.big), cfg.say && audioOn() ? speaker(cfg.say) : null) : null,
     cfg.small ? h('p', { class: 'muted' }, cfg.small) : null,
-    h('div', { class: 'opts' }, btns));
+    h('div', { class: 'opts' + (cfg.grid ? ' grid' : '') }, btns));
   if (cfg.say && cfg.autoplay) say(cfg.say);
 }
 function tileUI(ex, main, foot, cfg) {
@@ -496,9 +535,11 @@ const RENDER = {
       say(it.el);
     } else {
       put(main, h('p', { class: 'label' }, 'Nieuw woord'), h('div', { class: 'introcard' },
+        EMOJI[it.el] ? h('div', { class: 'emoji' }, EMOJI[it.el]) : null,
         h('div', { class: 'prompt greek' }, it.el),
         tl ? h('div', { class: 'tl' }, translit(it.el)) : null,
-        h('div', { class: 'nl' }, it.nl), speaker(it.el)));
+        h('div', { class: 'nl' }, it.nl), speaker(it.el),
+        HOOKS[it.el] ? h('div', { class: 'hook' }, HOOKS[it.el]) : null));
       say(it.el);
     }
     plainNext(foot);
@@ -529,6 +570,34 @@ const RENDER = {
     if (mode === 'w-t') choiceUI(ex, main, { label: 'Hoe spreek je dit uit?', big: ex.word, grBig: true, opts: all.map(w => ({ text: translit(w), ok: w === ex.word })), fb });
     else if (mode === 't-w') choiceUI(ex, main, { label: 'Welk woord klinkt zo?', big: translit(ex.word), opts: all.map(w => ({ text: w, ok: w === ex.word })), grOpts: true, fb });
     else choiceUI(ex, main, { label: 'Welk woord hoor je?', say: ex.word, hide: true, autoplay: true, opts: all.map(w => ({ text: w, ok: w === ex.word })), grOpts: true, fb });
+  },
+  pic(ex, main) {
+    const it = ITEMS[ex.id];
+    const pool = BYTRACK.word.filter(x => EMOJI[x.el] && x.id !== it.id && EMOJI[x.el] !== EMOJI[it.el]);
+    const near = pool.filter(x => x.unit === it.unit), known = pool.filter(x => x.unit !== it.unit && S.items[x.id]);
+    const seen = new Set(), others = [];
+    for (const x of shuffle(near).concat(shuffle(known), shuffle(pool))) { if (others.length < 3 && !seen.has(x.id)) { seen.add(x.id); others.push(x); } }
+    const all = shuffle([it].concat(others));
+    const fb = { el: it.el, nl: `${EMOJI[it.el]} ${it.nl}`, right: it.el };
+    if (ex.mode === 'e-w') choiceUI(ex, main, { label: 'Welk woord hoort hierbij?', big: EMOJI[it.el], huge: true, opts: all.map(x => ({ text: x.el, ok: x.id === it.id })), grOpts: true, fb: Object.assign({ sayAfter: true }, fb) });
+    else if (audioOn()) choiceUI(ex, main, { label: 'Tik op wat je hoort', say: it.el, hide: true, autoplay: true, grid: true, opts: all.map(x => ({ text: EMOJI[x.el], ok: x.id === it.id })), fb });
+    else choiceUI(ex, main, { label: 'Welk plaatje hoort hierbij?', big: it.el, grBig: true, grid: true, opts: all.map(x => ({ text: EMOJI[x.el], ok: x.id === it.id })), fb });
+  },
+  odd(ex, main) {
+    const same = ex.ids.map(id => ITEMS[id]), odd = ITEMS[ex.odd];
+    choiceUI(ex, main, { label: 'Welke hoort er niet bij?', small: 'Drie van deze woorden komen uit hetzelfde thema.', grOpts: true,
+      opts: shuffle(same.concat(odd)).map(x => ({ text: x.el, ok: x.id === odd.id })),
+      fb: { right: odd.el, el: odd.el, nl: odd.nl, note: 'De andere drie: ' + same.map(x => `${x.el} (${x.nl})`).join(', ') + '.' } });
+  },
+  tf(ex, main, foot) {
+    const it = ITEMS[ex.id];
+    const shown = ex.truth ? it.nl : (distractors(it, 1, 'nl')[0] || it).nl;
+    const truth = shown === it.nl;
+    const go = says => answer(ex, says === truth, { el: it.el, nl: it.nl, right: truth ? 'dit klopte wel' : 'dit klopte niet', quick: true });
+    put(main, h('p', { class: 'label' }, 'Snelle ronde: klopt dit?'),
+      h('div', { class: 'tfcard' }, h('div', { class: 'prompt greek' }, it.el), h('div', { class: 'eq' }, '='), h('div', { class: 'prompt' }, shown)));
+    put(foot, h('div', { class: 'two' }, h('button', { class: 'btn ghost no', onclick: () => go(false) }, 'Klopt niet'), h('button', { class: 'btn ghost yes', onclick: () => go(true) }, 'Klopt')));
+    say(it.el);
   },
   cog(ex, main) {
     const [el, nl] = ex.pair;
@@ -712,11 +781,13 @@ function finish() {
   ses = null;
   fill($('#app'), h('div', { class: 'sum' },
     h('div', { class: 'done-mark' + (mode === 'test' && pct < 80 ? ' retry' : ''), html: mode === 'test' && pct < 80 ? ICON_RETRY : ICON_CHECK }),
-    h('h1', {}, title),
+    h('h1', {}, title, mode === 'lesson' || (mode === 'test' && pct >= 80) ? h('span', { class: 'cheer gr' }, pick(['Μπράβο!', 'Τέλεια!', 'Πολύ ωραία!', 'Συγχαρητήρια!'])) : null),
     lines.map(l => h('p', { class: 'muted' }, l)),
     list.length ? h('div', { class: 'card' },
       h('p', { class: 'label', style: 'margin-bottom:6px' }, mode === 'lesson' ? 'Nieuw geleerd' : 'Nog even naar kijken'),
       h('div', { class: 'wordlist' }, list.map(id => { const it = ITEMS[id]; return h('button', { class: missed.includes(id) && mode === 'lesson' ? 'miss' : '', onclick: () => say(it.say) }, h('span', { class: 'g' }, it.el), h('span', { class: 'd' }, it.nl)); }))) : null,
+    mode === 'lesson' ? (() => { const c = POSTCARDS[Object.keys(S.done).length % POSTCARDS.length]; return h('button', { class: 'postcard', onclick: () => c[0] && say(c[0]) },
+      h('span', { class: 'pc-k' }, c[0] ? 'Zo zeggen Grieken het' : 'Wist je dat'), c[0] ? h('span', { class: 'pc-el gr' }, c[0]) : null, h('span', { class: 'pc-nl' }, c[1])); })() : null,
     h('div', { class: 'spacer' }), extra,
     mode === 'lesson' && next && unlocked(next) ? h('button', { class: 'btn', onclick: () => startNode(next) }, next.kind === 'test' ? 'Door naar de toets' : 'Volgende les') : null,
     mode === 'test' && pct < 80 ? h('button', { class: 'btn', onclick: () => startNode(node) }, 'Toets opnieuw') : null,
@@ -871,6 +942,7 @@ function viewSettings() {
       toggle('audio', 'Geluid', 'Griekse uitspraak en luisteroefeningen'),
       toggle('speak', 'Spreekoefeningen', SR ? 'Met spraakherkenning; je stem gaat daarvoor naar Google' : 'Zonder spraakherkenning: je beoordeelt jezelf'),
       toggle('translit', 'Uitspraakhulp', 'Toont de klank in gewone letters, zoals kaliméra'),
+      toggle('fx', 'Geluidjes en trillen', 'Een kort signaal bij goed of fout'),
       toggle('typing', 'Zelf typen', 'Woorden typen in plaats van letters aantikken. Leert beter, maar vraagt een Grieks toetsenbord (Gboard > Talen > Grieks)'),
       h('div', { class: 'set' }, h('div', { class: 'grow' }, h('div', {}, 'Spreeksnelheid'), h('div', { class: 'muted small' }, st.rate <= 0.75 ? 'Langzaam' : st.rate >= 1 ? 'Normaal tempo' : 'Iets langzamer')),
         h('input', { type: 'range', min: '0.6', max: '1.1', step: '0.05', value: String(st.rate), 'aria-label': 'Spreeksnelheid', onchange: e => { st.rate = +e.target.value; save(); render(); } })),

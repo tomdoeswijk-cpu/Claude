@@ -1,6 +1,6 @@
 /* Offline-cache: toont direct de opgeslagen versie en haalt op de achtergrond de nieuwste op. */
-const CACHE = 'ellinika-v3';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'data-core.js', 'data-a1.js', 'data-a2.js', 'data-extra.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'ellinika-v4';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'data-core.js', 'data-a1.js', 'data-a2.js', 'data-extra.js', 'data-fun.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
